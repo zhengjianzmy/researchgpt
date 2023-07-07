@@ -50,6 +50,12 @@ input[type="text"] {
     display: none;
 }
 
+.textArea {
+    width: 100%;
+    height: 100vh;
+    display: none;
+}
+
 #chat {
     width: 100%;
 }

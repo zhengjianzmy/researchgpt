@@ -10,3 +10,6 @@ gunicorn==20.1.0
 scikit-learn==0.24.1
 redis
 jinja2
+python-docx
+mammoth
+bs4

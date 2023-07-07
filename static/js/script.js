@@ -4,6 +4,7 @@ document.addEventListener("DOMContentLoaded", function() {
 const input = document.querySelector("input[type='file']");
 var uploadBtn = document.querySelector(".upload-btn");
 const viewer = document.querySelector("#pdf-viewer");
+const textArea = document.querySelector("#textArea");
 const container = document.querySelector("#container");
 var x = document.querySelector("input[name='pdf-url']");
 const form = document.querySelector("form");
@@ -82,7 +83,8 @@ send.addEventListener("click", function(event) {
       errorMessage.style.color = "red";
       errorMessage.style.marginBottom = "0px";
       errorMessage.style.paddingTop = "0px";
-      errorMessage.innerHTML = "Error: Request to OpenAI failed. Please try again.";
+      errorMessage.innerHTML = "Error: Network connecting timeout. Please try again later.";
+      // errorMessage.innerHTML = "Error: Request to OpenAI failed. Please try again.";
       chat.appendChild(errorMessage);
       chat.scrollTop = chat.scrollHeight;
     });
@@ -104,8 +106,8 @@ y.addEventListener("submit", function(event) {
         return;
     }
     // if the url does not end with .pdf, make x.value = "Error: URL does not end with .pdf"
-    if (!url.endsWith(".pdf")) {
-        x.value = "Error: URL does not end with .pdf";
+    if (!url.endsWith(".pdf") || !url.endsWith(".txt") || !url.endswith(".docx")) {
+        x.value = "Error: URL does not end with .pdf or .txt or .docx";
         return;
     }
     x.value = "Loading...";
@@ -124,6 +126,7 @@ y.addEventListener("submit", function(event) {
             up.style.display = "none";
             container.style.display = "flex";
             viewer.style.display = "block";
+	    textArea.style.display = "none";
         });
         })
         .catch(error => {
@@ -153,8 +156,10 @@ y.addEventListener("submit", function(event) {
         window.key = data.key;
       })
       .catch(error => {
-        uploadBtn.innerHTML = "Error: Request to server failed. Please try again. Check the URL if there is https:// at the beginning. If not, add it.";
-        x.innerHTML = "Error: Request to server failed. Please try again. Check the URL if there is https:// at the beginning. If not, add it.";
+        uploadBtn.innerHTML = "Error: Network connecting timeout. Please try again later.";
+        // uploadBtn.innerHTML = "Error: Request to server failed. Please try again. Check the URL if there is https:// at the beginning. If not, add it.";
+        x.innerHTML = "Error: Network connecting timeout. Please try again later.";
+	// x.innerHTML = "Error: Request to server failed. Please try again. Check the URL if there is https:// at the beginning. If not, add it.";
         console.error(error);
       });
 });
@@ -169,13 +174,29 @@ input.addEventListener("change", async function() {
   loading.style.fontSize = "14px";
   loading.innerHTML = "Calculating embeddings...";
   chat.appendChild(loading);
+  
+  const filename = file.name;
+  var contentType = 'application/pdf'
+  body = fileArrayBuffer;
+  if (filename.endsWith(".docx")) {
+    let reader = new FileReader();
+    reader.readAsArrayBuffer(file);
+    reader.onload = function(){ 
+      console.log(this.result);
+    }
+    contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    body = file;
+    resultObject = mammoth.extractRawText({arrayBuffer: fileArrayBuffer}).then(resultObject => {
+      // console.log(resultObject.value);
+    });
+  }
 
   // Make a post request to /process_pdf with the file
   fetch('/process_pdf', {
       method: 'POST',
-      body: fileArrayBuffer,
+      body: body,
       headers: {
-          'Content-Type': 'application/pdf',
+          'Content-Type': contentType,
           'Content-Length': fileArrayBuffer.byteLength,
           'Access-Control-Allow-Origin': '*',
           'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
@@ -192,18 +213,64 @@ input.addEventListener("change", async function() {
     loading.innerHTML = "Error: Processing the pdf failed due to excess load. Please try again later.  Check the URL if there is https:// at the beginning. If not, add it.";
     console.error(error);
   });
-    
-  pdfjsLib.getDocument(fileArrayBuffer).promise.then(pdfDoc => {
-  viewer.src = URL.createObjectURL(file);
-  uploadBtn.style.display = "none";
-  form.style.display = "none";
-  form.style.marginTop = "0px";
-  p.style.display = "none";
-  up.style.display = "none";
-  container.style.display = "flex";
-  viewer.style.display = "block";
-  }).catch(error => {
-  console.error(error);
+
+  const BASE_URL = "https://zhoupeng-paper.oss-us-east-1.aliyuncs.com/";
+  filepath = "paper";
+
+  fetch(BASE_URL + filepath + '/' + filename, {
+    method: "PUT",
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Credentials': true,
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      "Content-Length": file.length
+    },
+    body: file
   });
+  
+  if(filename.endsWith(".pdf")) {
+    pdfjsLib.getDocument(fileArrayBuffer).promise.then(pdfDoc => {
+    viewer.src = URL.createObjectURL(file);
+    uploadBtn.style.display = "none";
+    form.style.display = "none";
+    form.style.marginTop = "0px";
+    p.style.display = "none";
+    up.style.display = "none";
+    container.style.display = "flex";
+    viewer.style.display = "block";
+    textArea.style.display = "none";
+    }).catch(error => {
+    console.error(error);
+    });
+  } else if (filename.endsWith(".txt")) {
+    uploadBtn.style.display = "none";
+    form.style.display = "none";
+    form.style.marginTop = "0px";
+    p.style.display = "none";
+    up.style.display = "none";
+    container.style.display = "flex";
+    viewer.style.display = "none";
+    textArea.style.display = "block";
+    const reader = new FileReader();
+    reader.readAsText(file);
+    reader.onload = function(data) {
+      let res = data.target.result;
+      document.getElementById("textArea").value = res;
+    }
+  } else {
+    uploadBtn.style.display = "none";
+    form.style.display = "none";
+    form.style.marginTop = "0px";
+    p.style.display = "none";
+    up.style.display = "none";
+    container.style.display = "flex";
+    viewer.style.display = "block";
+    textArea.style.display = "none";
+    var iframe = document.getElementById("pdf-viewer");
+    console.log(URL.createObjectURL(file));
+    iframe.src = "https://view.officeapps.live.com/op/view.aspx?src=" + BASE_URL + filepath + "/" + filename;
+  }
+
 });
 });

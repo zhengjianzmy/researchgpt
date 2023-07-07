@@ -1,3 +1,4 @@
+from zipfile import ZipFile
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +13,11 @@ import os
 import requests
 import redis
 from _md5 import md5
+import json
+import docx
+from docx import Document
+import mammoth
+from bs4 import BeautifulSoup
 
 app = FastAPI()
 
@@ -37,7 +43,7 @@ db = redis.StrictRedis(host='localhost', port=6379, db=0)
 
 class Chatbot():
 
-    def extraxt_txt(self, txt):
+    def extract_txt(self, txt):
         with open(txt, "r") as f:
             text = f.read()
         return str(text)
@@ -80,6 +86,69 @@ class Chatbot():
         print("Done parsing paper")
         return paper_text
 
+    def extract_text(self, text):
+        print("Parsing paper")
+        number_of_pages = 1
+        print(f"Total number of pages: {number_of_pages}")
+        paper_text = []
+        for i in range(number_of_pages):
+            page = text
+            page_text = []
+
+            def visitor_body(text, cm, tm, fontDict, fontSize):
+                x = tm[4]
+                y = tm[5]
+                # ignore header/footer
+                if (y > 50 and y < 720) and (len(text.strip()) > 1):
+                    page_text.append({"fontsize": fontSize, "text": text.strip().replace("\x03", ""), "x": x, "y": y})
+
+            # _ = page.extract_text(visitor_text=visitor_body)
+
+            blob_font_size = None
+            blob_text = ""
+            processed_text = []
+
+            for t in page_text:
+                if t["fontsize"] == blob_font_size:
+                    blob_text += f" {t['text']}"
+                    if len(blob_text) >= 200:
+                        processed_text.append({"fontsize": blob_font_size, "text": blob_text, "page": i})
+                        blob_font_size = None
+                        blob_text = ""
+                else:
+                    if blob_font_size is not None and len(blob_text) >= 1:
+                        processed_text.append({"fontsize": blob_font_size, "text": blob_text, "page": i})
+                    blob_font_size = t["fontsize"]
+                    blob_text = t["text"]
+            paper_text += processed_text
+        print("Done parsing paper")
+        return paper_text
+
+    def extract_text(self, pdf):
+        print("Parsing paper")
+        paper_text = []
+
+        blob_font_size = None
+        blob_text = ""
+        processed_text = []
+
+        for t in pdf:
+            if t["fontsize"] == blob_font_size:
+                blob_text += f" {t['text']}"
+                if len(blob_text) >= 200:
+                    processed_text.append({"fontsize": blob_font_size, "text": blob_text, "page": t["page"]})
+                    blob_font_size = None
+                    blob_text = ""
+            else:
+                if blob_font_size is not None and len(blob_text) >= 1:
+                    processed_text.append({"fontsize": blob_font_size, "text": blob_text, "page": t["page"]})
+                blob_font_size = t["fontsize"]
+                blob_text = t["text"]
+        paper_text += processed_text
+        print("Done parsing paper")
+        return paper_text
+
+
     def create_df(self, data):
 
         if type(data) == list:
@@ -107,7 +176,7 @@ class Chatbot():
 
     def embeddings(self, df):
         print("Calculating embeddings")
-        # openai.api_key = os.getenv('OPENAI_API_KEY')
+        openai.api_key = os.getenv('OPENAI_API_KEY')
         embedding_model = "text-embedding-ada-002"
         embeddings = df.text.apply([lambda x: get_embedding(x, engine=embedding_model)])
         df["embeddings"] = embeddings
@@ -178,14 +247,47 @@ async def process_pdf(request: Request):
         print("Already processed pdf")
         return JSONResponse({"key": key})
     
-    file = body
-    pdf = PdfReader(BytesIO(file))
-
     chatbot = Chatbot()
-    paper_text = chatbot.extract_pdf(pdf)
-    df = chatbot.create_df(paper_text)
-    df = chatbot.embeddings(df)
+    file = body
+    try:
+        pdf = PdfReader(BytesIO(file))
+        paper_text = chatbot.extract_pdf(pdf)
+    except Exception as e:
+        print(e)
+        fileType = 'txt'
+        try:
+            decode_file = file.decode('UTF-8')
+        except Exception as e:
+            word_file = BytesIO(file)
+            result = mammoth.extract_raw_text(word_file)
+            fileType = 'docx'
+            # print(result.value)
+            decode_file = result.value
+        format_txt = decode_file.split('\r\n')
+        if len(format_txt) <= 1:
+            format_txt = decode_file.split('\n')
+        if len(format_txt) <= 1:
+            format_txt = decode_file.split('。')
+        pdf = []
+        page_sum = 3432
+        byte_count = 0
+        page = 0
+        for index, item in enumerate(format_txt):
+            byte_count = byte_count + len(item.encode())
+            if fileType == 'docx' and byte_count > page_sum:
+                page = page + 1
+                byte_count = byte_count - page_sum
+                print(page)
+                print(byte_count)
+            if len(item.strip()) <= 1:
+                continue
+            pdf.append({"fontsize": 10, "text": item.strip().replace("\n", ""), "x": 0, "y": index, "page": page})
+        paper_text = chatbot.extract_text(pdf)
 
+    
+    df = chatbot.create_df(paper_text)
+    print(df)
+    df = chatbot.embeddings(df)
     if db.get(key) is None:
         db.set(key, df.to_json())
 
@@ -212,6 +314,8 @@ async def download_pdf(url: str):
 async def reply(request: Request):
     data = await request.json()
     key = data.get('key')
+    print(key)
+    # key = '0d1a5394db151b059d3d2ccc9b7159b9'
     query = data.get('query')
     
     chatbot = Chatbot()
